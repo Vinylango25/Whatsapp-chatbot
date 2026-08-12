@@ -1,7 +1,11 @@
 """
 WC KB — Embedder
-Supports OpenAI embeddings (default) and Ollama nomic-embed-text (local/free).
-Auto-detects based on EMBEDDING_PROVIDER env var.
+Supports multiple embedding providers:
+  - huggingface (default, FREE) — uses HuggingFace Inference API
+  - ollama (FREE, local)        — requires Ollama running locally
+  - openai (paid)               — requires OPENAI_API_KEY with credits
+
+Set EMBEDDING_PROVIDER in .env to choose.
 """
 from __future__ import annotations
 import os, logging, numpy as np
@@ -9,10 +13,11 @@ from typing import List
 
 log = logging.getLogger("wc.kb.embedder")
 
-PROVIDER   = os.getenv("EMBEDDING_PROVIDER", "openai")   # openai | ollama
-MODEL      = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
-DIM        = int(os.getenv("EMBEDDING_DIM", "1536"))
-OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
+PROVIDER      = os.getenv("EMBEDDING_PROVIDER", "huggingface")
+MODEL         = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
+DIM           = int(os.getenv("EMBEDDING_DIM", "384"))   # all-MiniLM-L6-v2 = 384 dims
+HF_API_KEY    = os.getenv("HF_API_KEY", "")             # free at huggingface.co
+OLLAMA_URL    = os.getenv("OLLAMA_URL", "http://localhost:11434")
 
 
 class Embedder:
@@ -23,10 +28,11 @@ class Embedder:
         log.info(f"[embedder] provider={self.provider} model={self.model} dim={self.dim}")
 
     async def embed(self, text: str) -> List[float]:
-        """Embed a single text string. Returns a list of floats."""
         if not text or not text.strip():
             return [0.0] * self.dim
-        if self.provider == "openai":
+        if self.provider == "huggingface":
+            return await self._hf_embed(text)
+        elif self.provider == "openai":
             return await self._openai_embed(text)
         elif self.provider == "ollama":
             return await self._ollama_embed(text)
@@ -34,35 +40,65 @@ class Embedder:
             raise ValueError(f"Unknown embedding provider: {self.provider}")
 
     async def embed_batch(self, texts: List[str]) -> List[List[float]]:
-        """Embed a list of texts."""
-        if self.provider == "openai":
+        if self.provider == "huggingface":
+            return await self._hf_embed_batch(texts)
+        elif self.provider == "openai":
             return await self._openai_embed_batch(texts)
         return [await self.embed(t) for t in texts]
 
-    # ── OpenAI ────────────────────────────────────────────────────────────────
+    # ── HuggingFace Inference API (FREE) ──────────────────────────────────────
+
+    async def _hf_embed(self, text: str) -> List[float]:
+        import httpx
+        headers = {"Content-Type": "application/json"}
+        if HF_API_KEY:
+            headers["Authorization"] = f"Bearer {HF_API_KEY}"
+
+        url = f"https://api-inference.huggingface.co/pipeline/feature-extraction/{self.model}"
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(url, json={"inputs": text[:512]}, headers=headers)
+            resp.raise_for_status()
+            result = resp.json()
+
+        # HF returns list of lists for sentences — take first (or mean pool)
+        if isinstance(result[0], list):
+            # sentence-transformers models return [[vec]] — take first
+            emb = result[0] if isinstance(result[0][0], float) else result[0][0]
+        else:
+            emb = result
+
+        arr = np.array(emb, dtype=np.float32)
+        n   = np.linalg.norm(arr)
+        return (arr / n).tolist() if n > 0 else arr.tolist()
+
+    async def _hf_embed_batch(self, texts: List[str]) -> List[List[float]]:
+        """Embed batch via HF — process in chunks to avoid timeouts."""
+        results = []
+        # HF free tier: process one at a time to avoid rate limits
+        for text in texts:
+            vec = await self._hf_embed(text)
+            results.append(vec)
+        return results
+
+    # ── OpenAI (paid) ─────────────────────────────────────────────────────────
 
     async def _openai_embed(self, text: str) -> List[float]:
         from openai import AsyncOpenAI
         client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY", ""))
-        resp   = await client.embeddings.create(
-            input=text[:8000],
-            model=self.model,
-        )
+        resp   = await client.embeddings.create(input=text[:8000], model=self.model)
         return resp.data[0].embedding
 
     async def _openai_embed_batch(self, texts: List[str]) -> List[List[float]]:
         from openai import AsyncOpenAI
-        client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY", ""))
-        # OpenAI batch limit = 2048 inputs
+        client  = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY", ""))
         results = []
-        batch_size = 100
-        for i in range(0, len(texts), batch_size):
-            batch = [t[:8000] for t in texts[i:i+batch_size]]
+        for i in range(0, len(texts), 100):
+            batch = [t[:8000] for t in texts[i:i+100]]
             resp  = await client.embeddings.create(input=batch, model=self.model)
             results.extend([d.embedding for d in resp.data])
         return results
 
-    # ── Ollama ────────────────────────────────────────────────────────────────
+    # ── Ollama (free, local) ──────────────────────────────────────────────────
 
     async def _ollama_embed(self, text: str) -> List[float]:
         import httpx

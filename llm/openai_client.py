@@ -1,17 +1,18 @@
 """
-WC — OpenAI LLM Client
-Generates WhatsApp-friendly answers from retrieved context.
+WC — Groq LLM Client (Free)
+Generates WhatsApp-friendly answers using Groq's free API (LLaMA 3).
+Sign up free at https://console.groq.com — no credit card needed.
 """
 from __future__ import annotations
 import os, logging
-from openai import AsyncOpenAI
+from groq import AsyncGroq
 from rag.client import format_context_for_llm
 
 log = logging.getLogger("wc.llm")
 
-_client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY", ""))
+_client = AsyncGroq(api_key=os.getenv("GROQ_API_KEY", ""))
 
-MODEL       = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+MODEL       = os.getenv("GROQ_MODEL", "llama3-8b-8192")   # free, fast
 TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.3"))
 MAX_TOKENS  = int(os.getenv("LLM_MAX_TOKENS", "600"))
 
@@ -36,8 +37,7 @@ async def generate_answer(
     name: str = "there",
 ) -> str:
     """
-    Generate a WhatsApp-friendly answer using OpenAI.
-    context: list of Karisma chunk dicts with 'text', 'doc_name', etc.
+    Generate a WhatsApp-friendly answer using Groq (free LLaMA 3).
     """
     if not context:
         return "I couldn't find relevant information for that. Can you rephrase your question?"
@@ -45,7 +45,6 @@ async def generate_answer(
     context_text = format_context_for_llm(context)
     business     = tenant.get("business_name", "us")
 
-    # Build tenant-specific system prompt
     system = _SYSTEM_PROMPT
     custom = tenant.get("system_prompt_addition", "")
     if custom:
@@ -72,5 +71,5 @@ async def generate_answer(
         return response.choices[0].message.content.strip()
 
     except Exception as e:
-        log.exception(f"[llm] OpenAI error: {e}")
+        log.exception(f"[llm] Groq error: {e}")
         return "I'm having trouble generating a response right now. Please try again in a moment. 🙏"

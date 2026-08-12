@@ -17,7 +17,7 @@ log = logging.getLogger("wc.kb.store")
 
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY", "")
 PINECONE_INDEX   = os.getenv("PINECONE_INDEX", "wc-kb")
-DEFAULT_DIM      = int(os.getenv("EMBEDDING_DIM", "1536"))
+DEFAULT_DIM      = int(os.getenv("EMBEDDING_DIM", "384"))
 
 
 class VectorStore:
