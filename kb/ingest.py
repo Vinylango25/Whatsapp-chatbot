@@ -57,24 +57,23 @@ async def ingest_file(
     texts    = [c["text"] for c in chunks]
     vectors  = await embedder.embed_batch(texts)
 
-    # 4. Build Qdrant points
-    from qdrant_client.models import PointStruct
+    # 4. Build Pinecone points (plain dicts: id, values, metadata)
     points = []
     for chunk, vector in zip(chunks, vectors):
-        points.append(PointStruct(
-            id=str(uuid.uuid4()),
-            vector=vector,
-            payload={
+        points.append({
+            "id":     str(uuid.uuid4()),
+            "values": vector,
+            "metadata": {
                 "text":        chunk["text"],
                 "doc_name":    doc_name,
                 "chunk_index": chunk["chunk_index"],
                 "page_num":    chunk["page_num"],
                 "tenant_id":   tenant_id,
                 "category":    category,
-                "tags":        tags or [],
+                "tags":        ",".join(tags or []),  # Pinecone metadata must be str/int/float
                 "ingested_at": int(time.time()),
             },
-        ))
+        })
 
     # 5. Upsert into Qdrant
     store.upsert(col, points)

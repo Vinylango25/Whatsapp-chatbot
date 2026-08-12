@@ -9,6 +9,7 @@ from rag.client import karisma_retrieve
 from llm.openai_client import generate_answer
 from payments.mpesa import initiate_stk_push, get_payment_status
 from demo.sandbox import is_demo_number, get_demo_tenant
+from kb.retriever import cache_answer
 
 log = logging.getLogger("wc.processor")
 
@@ -89,9 +90,9 @@ async def process_message(
 async def _answer_question(
     sender: str, msg: str, session: dict, tenant: dict, name: str
 ) -> str:
-    """Retrieve from Karisma KB and generate an answer with OpenAI."""
+    """Retrieve from KB and generate an answer with OpenAI."""
     try:
-        # 1. Retrieve relevant context from Karisma
+        # 1. Retrieve relevant context from internal KB
         rag_result = await karisma_retrieve(
             query=msg,
             tenant_id=tenant["tenant_id"],
@@ -101,8 +102,9 @@ async def _answer_question(
 
         context_chunks = rag_result.get("context", [])
         cached_answer  = rag_result.get("answer")
+        query_vector   = rag_result.get("query_vector")
 
-        # 2. If Karisma already generated an answer (cache hit), use it
+        # 2. If semantic cache hit, use it directly (no OpenAI call needed)
         if cached_answer:
             answer = cached_answer
         elif context_chunks:
@@ -113,10 +115,22 @@ async def _answer_question(
                 tenant=tenant,
                 name=name,
             )
+            # 4. Store in semantic cache for future similar queries
+            if query_vector:
+                try:
+                    await cache_answer(
+                        query=msg,
+                        query_vector=query_vector,
+                        tenant_id=tenant["tenant_id"],
+                        context=context_chunks,
+                        answer=answer,
+                    )
+                except Exception as cache_err:
+                    log.warning(f"[processor] cache_answer failed (non-fatal): {cache_err}")
         else:
             answer = _fallback_message(tenant)
 
-        # 4. Track in session
+        # 5. Track in session
         await session_mgr.add_turn(sender, msg, answer)
         return _format_whatsapp(answer)
 

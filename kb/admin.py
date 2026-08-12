@@ -130,20 +130,11 @@ async def clear_cache(tenant_id: str, api_key: str = Query(default="")):
     """Clear semantic cache for a tenant."""
     _check_admin(api_key)
     store     = get_store()
-    embedder  = get_embedder()
     cache_col = store.cache_collection(tenant_id)
-    store.ensure_collection(cache_col, dim=embedder.dim)
-
-    # Delete and recreate the collection (fastest way to clear all entries)
-    from qdrant_client.models import Distance, VectorParams
     try:
-        store.client.delete_collection(collection_name=cache_col)
-    except Exception:
-        pass
-    store.client.create_collection(
-        collection_name=cache_col,
-        vectors_config=VectorParams(size=embedder.dim, distance=Distance.COSINE),
-    )
+        store._index.delete(delete_all=True, namespace=cache_col)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Cache clear failed: {e}")
     return {"status": "cleared", "tenant_id": tenant_id, "collection": cache_col}
 
 
@@ -155,7 +146,7 @@ async def kb_health():
     embedder = get_embedder()
     return {
         "status":             "ok",
-        "qdrant_path":        os.getenv("QDRANT_PATH", "./qdrant_storage"),
+        "pinecone_index":     os.getenv("PINECONE_INDEX", "wc-kb"),
         "embedding_provider": embedder.provider,
         "embedding_model":    embedder.model,
     }

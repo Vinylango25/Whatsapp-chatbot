@@ -3,6 +3,7 @@ fastapi==0.115.5
 uvicorn[standard]==0.32.1
 python-multipart==0.0.19
 python-dotenv==1.0.1
+mangum==0.19.0
 
 # ── HTTP & async ──────────────────────────────────────────────────────────────
 httpx==0.28.1
@@ -16,8 +17,8 @@ twilio==9.3.7
 # ── Redis (session store — falls back to in-memory if unavailable) ────────────
 redis==5.2.1
 
-# ── Vector store (embedded Qdrant — no Docker/server needed) ─────────────────
-qdrant-client==1.12.1
+# ── Vector store (Pinecone serverless — works on Vercel) ─────────────────────
+pinecone==5.4.2
 
 # ── Document parsing ─────────────────────────────────────────────────────────
 pypdf==5.1.0
@@ -26,3 +27,4 @@ python-docx==1.1.2
 
 # ── Numeric (used by Ollama embedder normalization) ───────────────────────────
 numpy==1.26.4
+

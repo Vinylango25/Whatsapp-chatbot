@@ -51,19 +51,25 @@ async def retrieve(
             hit     = cache_hits[0]
             payload = hit.payload
             log.info(f"[retriever] Cache hit (score={hit.score:.3f}) for: {query[:60]}")
-            # Update hit count
+            # Update hit count via Pinecone metadata update
             try:
-                store.client.set_payload(
-                    collection_name=cache_col,
-                    payload={"hit_count": payload.get("hit_count", 0) + 1,
-                             "last_accessed": int(time.time())},
-                    points=[hit.id],
-                )
+                store.set_payload(cache_col, hit.id, {
+                    "hit_count":     payload.get("hit_count", 0) + 1,
+                    "last_accessed": int(time.time()),
+                })
             except Exception:
                 pass
+            # context was serialised as JSON string on write — deserialise it
+            import json
+            raw_context = payload.get("context", "[]")
+            try:
+                context_list = json.loads(raw_context) if isinstance(raw_context, str) else raw_context
+            except Exception:
+                context_list = []
             return {
                 "query":            query,
-                "context":          payload.get("context", []),
+                "query_vector":     query_vector,
+                "context":          context_list,
                 "answer":           payload.get("answer"),
                 "source":           "semantic_cache_hit",
                 "similarity_score": hit.score,
@@ -96,6 +102,7 @@ async def retrieve(
 
     return {
         "query":            query,
+        "query_vector":     query_vector,
         "context":          context,
         "answer":           None,
         "source":           "kb_retrieval",
@@ -116,18 +123,18 @@ async def cache_answer(
     cache_col = store.cache_collection(tenant_id)
     store.ensure_collection(cache_col, dim=embedder.dim)
 
-    from qdrant_client.models import PointStruct
-    store.upsert(cache_col, [PointStruct(
-        id=str(uuid.uuid4()),
-        vector=query_vector,
-        payload={
-            "query":        query,
-            "context":      context,
-            "answer":       answer,
-            "tenant_id":    tenant_id,
-            "hit_count":    0,
-            "created_at":   int(time.time()),
+    import json
+    store.upsert(cache_col, [{
+        "id":     str(uuid.uuid4()),
+        "values": query_vector,
+        "metadata": {
+            "query":         query,
+            "context":       json.dumps(context),  # Pinecone metadata must be scalar — serialise list
+            "answer":        answer,
+            "tenant_id":     tenant_id,
+            "hit_count":     0,
+            "created_at":    int(time.time()),
             "last_accessed": int(time.time()),
         },
-    )])
+    }])
     log.info(f"[retriever] Cached answer for: {query[:60]}")
