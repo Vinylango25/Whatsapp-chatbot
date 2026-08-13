@@ -4,6 +4,7 @@ Supports multiple embedding providers:
   - huggingface (default, FREE) — uses HuggingFace Inference API
   - ollama (FREE, local)        — requires Ollama running locally
   - openai (paid)               — requires OPENAI_API_KEY with credits
+  - groq (FREE)                 — uses Groq API (free, fast)
 
 Set EMBEDDING_PROVIDER in .env to choose.
 """
@@ -18,6 +19,7 @@ MODEL         = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L
 DIM           = int(os.getenv("EMBEDDING_DIM", "384"))   # all-MiniLM-L6-v2 = 384 dims
 HF_API_KEY    = os.getenv("HF_API_KEY", "")             # free at huggingface.co
 OLLAMA_URL    = os.getenv("OLLAMA_URL", "http://localhost:11434")
+GROQ_API_KEY  = os.getenv("GROQ_API_KEY", "")           # free at console.groq.com
 
 
 class Embedder:
@@ -36,13 +38,15 @@ class Embedder:
             return await self._openai_embed(text)
         elif self.provider == "ollama":
             return await self._ollama_embed(text)
+        elif self.provider == "groq":
+            return await self._groq_embed(text)
         else:
             raise ValueError(f"Unknown embedding provider: {self.provider}")
 
     async def embed_batch(self, texts: List[str]) -> List[List[float]]:
         if self.provider == "huggingface":
             return await self._hf_embed_batch(texts)
-        elif self.provider == "openai":
+        elif self.provider in ("openai", "groq"):
             return await self._openai_embed_batch(texts)
         return [await self.embed(t) for t in texts]
 
@@ -90,7 +94,16 @@ class Embedder:
 
     async def _openai_embed_batch(self, texts: List[str]) -> List[List[float]]:
         from openai import AsyncOpenAI
-        client  = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY", ""))
+        
+        # Use Groq if that's the provider, otherwise OpenAI
+        if self.provider == "groq":
+            base_url = "https://api.groq.com/openai/v1"
+            api_key = os.getenv("GROQ_API_KEY", "")
+        else:
+            base_url = "https://api.openai.com/v1"
+            api_key = os.getenv("OPENAI_API_KEY", "")
+        
+        client = AsyncOpenAI(base_url=base_url, api_key=api_key)
         results = []
         for i in range(0, len(texts), 100):
             batch = [t[:8000] for t in texts[i:i+100]]
@@ -112,6 +125,27 @@ class Embedder:
         arr = np.array(emb, dtype=np.float32)
         n   = np.linalg.norm(arr)
         return (arr / n).tolist() if n > 0 else arr.tolist()
+
+    # ── Groq (FREE) ───────────────────────────────────────────────────────────
+
+    async def _groq_embed(self, text: str) -> List[float]:
+        """Embed using Groq's inference API (free tier)."""
+        import httpx
+        headers = {
+            "Authorization": f"Bearer {GROQ_API_KEY}",
+            "Content-Type": "application/json"
+        }
+        # Groq uses OpenAI-compatible embedding endpoint
+        url = "https://api.groq.com/openai/v1/embeddings"
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(
+                url,
+                json={"input": text[:8000], "model": self.model},
+                headers=headers
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            return data["data"][0]["embedding"]
 
 
 # Singleton
