@@ -12,7 +12,7 @@ log = logging.getLogger("wc.llm")
 
 _client = AsyncGroq(api_key=os.getenv("GROQ_API_KEY", ""))
 
-MODEL       = os.getenv("GROQ_MODEL", "llama3-8b-8192")   # free, fast
+MODEL       = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")   # free, fast
 TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.3"))
 MAX_TOKENS  = int(os.getenv("LLM_MAX_TOKENS", "600"))
 

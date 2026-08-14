@@ -40,3 +40,15 @@ Thumbs.db
 .coverage
 htmlcov/
 .pytest_cache/
+
+# Runtime / temp files
+server.log
+server.pid
+bot_reply.txt
+results.txt
+response.xml
+test_response.xml
+start_server.bat
+
+# Qdrant local storage (not used — we use Pinecone)
+qdrant_storage/
