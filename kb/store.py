@@ -83,16 +83,13 @@ class VectorStore:
         """
         Semantic search. Returns list of result objects with .id, .score, .payload.
         """
-        pinecone_filter = None
-        if filters:
-            pinecone_filter = {k: {"$eq": v} for k, v in filters.items() if v}
-
         try:
+            # Pinecone free tier does not support metadata filtering.
+            # Tenant isolation is handled via namespaces (e.g. "fademasters_kb").
             resp = self._index.query(
                 vector=vector,
                 top_k=top_k,
                 namespace=collection,
-                filter=pinecone_filter,
                 include_metadata=True,
             )
             # Wrap Pinecone matches into objects that look like Qdrant ScoredPoints
