@@ -28,8 +28,8 @@ pypdf==5.1.0
 pdfplumber==0.11.4
 python-docx==1.1.2
 
-# ── Embeddings (sentence-transformers — free, runs in-process, no API needed) ─
-sentence-transformers==3.3.1
+# ── Embeddings (fastembed — free, ONNX-based, ~100MB RAM, no PyTorch needed) ──
+fastembed==0.4.2
 
 # ── Numeric ───────────────────────────────────────────────────────────────────
 numpy>=1.26.4

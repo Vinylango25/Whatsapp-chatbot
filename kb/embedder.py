@@ -1,11 +1,11 @@
 """
 WC KB — Embedder
 Supports multiple embedding providers:
-  - sentence_transformers (default, FREE) — runs in-process, no API needed
-  - huggingface (FREE)  — uses HuggingFace Inference API (requires network access)
-  - ollama (FREE, local) — requires Ollama running locally
-  - openai (paid)        — requires OPENAI_API_KEY with credits
-  - groq (FREE)          — uses Groq API (free, fast)
+  - fastembed (default, FREE) — ONNX-based, ~100MB RAM, no PyTorch, no API needed
+  - huggingface (FREE)        — uses HuggingFace Inference API (requires network access)
+  - ollama (FREE, local)      — requires Ollama running locally
+  - openai (paid)             — requires OPENAI_API_KEY with credits
+  - groq (FREE)               — uses Groq API (free, fast)
 
 Set EMBEDDING_PROVIDER in .env to choose.
 """
@@ -15,24 +15,24 @@ from typing import List
 
 log = logging.getLogger("wc.kb.embedder")
 
-PROVIDER      = os.getenv("EMBEDDING_PROVIDER", "sentence_transformers")
-MODEL         = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
-DIM           = int(os.getenv("EMBEDDING_DIM", "384"))   # all-MiniLM-L6-v2 = 384 dims
-HF_API_KEY    = os.getenv("HF_API_KEY", "")             # free at huggingface.co
+PROVIDER      = os.getenv("EMBEDDING_PROVIDER", "fastembed")
+MODEL         = os.getenv("EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5")
+DIM           = int(os.getenv("EMBEDDING_DIM", "384"))
+HF_API_KEY    = os.getenv("HF_API_KEY", "")
 OLLAMA_URL    = os.getenv("OLLAMA_URL", "http://localhost:11434")
-GROQ_API_KEY  = os.getenv("GROQ_API_KEY", "")           # free at console.groq.com
+GROQ_API_KEY  = os.getenv("GROQ_API_KEY", "")
 
-# Lazy-loaded in-process sentence-transformers model (shared across requests)
-_st_model = None
+# Lazy-loaded fastembed model (shared across requests)
+_fe_model = None
 
-def _get_st_model(model_name: str):
-    global _st_model
-    if _st_model is None:
-        from sentence_transformers import SentenceTransformer
-        log.info(f"[embedder] Loading sentence-transformers model: {model_name}")
-        _st_model = SentenceTransformer(model_name)
-        log.info("[embedder] sentence-transformers model loaded.")
-    return _st_model
+def _get_fe_model(model_name: str):
+    global _fe_model
+    if _fe_model is None:
+        from fastembed import TextEmbedding
+        log.info(f"[embedder] Loading fastembed model: {model_name}")
+        _fe_model = TextEmbedding(model_name)
+        log.info("[embedder] fastembed model loaded.")
+    return _fe_model
 
 
 class Embedder:
@@ -41,15 +41,15 @@ class Embedder:
         self.model    = MODEL
         self.dim      = DIM
         log.info(f"[embedder] provider={self.provider} model={self.model} dim={self.dim}")
-        # Pre-load the model at startup to avoid cold-start latency on first query
-        if self.provider == "sentence_transformers":
-            _get_st_model(self.model)
+        # Pre-load at startup to avoid cold-start on first query
+        if self.provider == "fastembed":
+            _get_fe_model(self.model)
 
     async def embed(self, text: str) -> List[float]:
         if not text or not text.strip():
             return [0.0] * self.dim
-        if self.provider == "sentence_transformers":
-            return self._st_embed(text)
+        if self.provider == "fastembed":
+            return self._fe_embed(text)
         elif self.provider == "huggingface":
             return await self._hf_embed(text)
         elif self.provider == "openai":
@@ -62,25 +62,31 @@ class Embedder:
             raise ValueError(f"Unknown embedding provider: {self.provider}")
 
     async def embed_batch(self, texts: List[str]) -> List[List[float]]:
-        if self.provider == "sentence_transformers":
-            return self._st_embed_batch(texts)
+        if self.provider == "fastembed":
+            return self._fe_embed_batch(texts)
         elif self.provider == "huggingface":
             return await self._hf_embed_batch(texts)
         elif self.provider in ("openai", "groq"):
             return await self._openai_embed_batch(texts)
         return [await self.embed(t) for t in texts]
 
-    # ── sentence-transformers (FREE, in-process, no API needed) ──────────────
+    # ── fastembed (FREE, ONNX, ~100MB RAM, no PyTorch) ────────────────────────
 
-    def _st_embed(self, text: str) -> List[float]:
-        model = _get_st_model(self.model)
-        vec   = model.encode(text, normalize_embeddings=True)
-        return vec.tolist()
+    def _fe_embed(self, text: str) -> List[float]:
+        model = _get_fe_model(self.model)
+        vec   = list(model.embed([text]))[0]
+        arr   = np.array(vec, dtype=np.float32)
+        n     = np.linalg.norm(arr)
+        return (arr / n).tolist() if n > 0 else arr.tolist()
 
-    def _st_embed_batch(self, texts: List[str]) -> List[List[float]]:
-        model = _get_st_model(self.model)
-        vecs  = model.encode(texts, normalize_embeddings=True, batch_size=32)
-        return vecs.tolist()
+    def _fe_embed_batch(self, texts: List[str]) -> List[List[float]]:
+        model   = _get_fe_model(self.model)
+        results = []
+        for vec in model.embed(texts):
+            arr = np.array(vec, dtype=np.float32)
+            n   = np.linalg.norm(arr)
+            results.append((arr / n).tolist() if n > 0 else arr.tolist())
+        return results
 
     # ── HuggingFace Inference API (FREE) ──────────────────────────────────────
 
